@@ -1,11 +1,12 @@
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+from functions import visualize_results, RoundHPF
 
 # Load the grayscale MRI image
 # Dataset\Original\Healthy\Healthy (1).jpg
-# Dataset\Original\Patient\Patient (40).jpg
-image_path = r"Dataset\Original\Healthy\Healthy (2).jpg"
+# Dataset\Original\Patient\Patient (16).jpg
+image_path = r"Dataset\Original\Patient\Patient (16).jpg"
 img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
 
 # ---------------------------------------
@@ -19,21 +20,10 @@ dft_shift = np.fft.fftshift(dft)
 
 # ---------------------------------------
 # Create a High-Pass Filter Mask
-rows, cols = img.shape
-crow, ccol = int(rows / 2), int(cols / 2)
-
-# Create a binary mask (standard high-pass filter)
-mask = np.ones((rows, cols), np.float32)
-r_out = 40  # Radius for the circular mask (determines the high-pass filter cut-off)
-x, y = np.ogrid[:rows, :cols]
-mask_area = (x - crow) ** 2 + (y - ccol) ** 2 <= r_out ** 2
-mask[mask_area] = 0  # Low frequencies are zeroed out, keeping only high frequencies
-
+mask = RoundHPF(img, r_out=20)
 # ---------------------------------------
-# Soften the Mask Using Gaussian Smoothing
-
 # Convert the mask to a 3-channel for convolution (if needed for complex DFT)
-mask_smoothed = cv2.GaussianBlur(mask, (23,23), sigmaX=10)
+mask_smoothed = cv2.GaussianBlur(mask, (61,61), sigmaX=10)
 
 # Expand the smoothed mask to apply it to both real and imaginary parts of the DFT
 mask_smoothed = np.repeat(mask_smoothed[:, :, np.newaxis], 2, axis=2)
@@ -42,7 +32,7 @@ mask_smoothed = np.repeat(mask_smoothed[:, :, np.newaxis], 2, axis=2)
 fshift = dft_shift * mask_smoothed
 
 # Magnitude spectrum after applying the high-pass filter (optional)
-magnitude_spectrum = 20 * np.log(cv2.magnitude(fshift[:, :, 0], fshift[:, :, 1]) + 1)
+magnitude_spectrum = 2000 * np.log(cv2.magnitude(fshift[:, :, 0], fshift[:, :, 1]) + 1)
 
 # ---------------------------------------
 # Inverse DFT to get the edge-detected image
@@ -55,31 +45,27 @@ img_back = cv2.normalize(img_back, None, 0, 255, cv2.NORM_MINMAX)
 
 
 
-kernel = np.ones((7,7), np.uint8)
-edges_1 = cv2.morphologyEx(img_back, cv2.MORPH_CLOSE, kernel)
+# kernel = np.ones((5,5), np.uint8)
+# edges_1 = cv2.morphologyEx(img_back, cv2.MORPH_CLOSE, kernel)
 
-# Step 1: Apply Thresholding to isolate potential regions of the spinal cord
-_, binary_image = cv2.threshold(edges_1, 50, 100, cv2.THRESH_BINARY)
+# # Step 1: Apply Thresholding to isolate potential regions of the spinal cord
+img_back = cv2.convertScaleAbs(img_back)
+_,binary_image = cv2.threshold(img_back,100,200,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
 
-edges_2 = cv2.Canny(np.uint8(edges_1), 100, 200)
 
-# kernel = np.ones((5, 5), np.uint8)
-# edges_2 = cv2.morphologyEx(edges_1, cv2.MORPH_CLOSE, kernel)
+edges_2 = cv2.Canny(np.uint8(img_back), 100, 200)
+
+kernel = np.ones((5, 5), np.uint8)
+edges_2 = cv2.morphologyEx(binary_image, cv2.MORPH_CLOSE, kernel)
 
 # ---------------------------------------
 # Visualization
 
-titles = ['Original Image', 'High-Pass Mask (Sharp)', 'Smoothed Mask', 'Edge Image (Fourier)', 'Edge Image (Canny)', 'Edge Image (Morphology)', 'Binary Image']
-images = [img, mask, mask_smoothed[:, :, 0], img_back, edges_1, edges_2, binary_image]
+titles = ['Original Image', 'High-Pass Mask (Sharp)', 'Smoothed Mask','Image Back' ,'Binary Image', 'Edge Image (Canny)']
+images = [img, mask, mask_smoothed[:, :, 0], img_back ,binary_image,  edges_2]
 
-plt.figure(figsize=(15, 10))
-for i in range(len(images)):
-    plt.subplot(2, 4, i+1)
-    plt.imshow(images[i], cmap='gray')
-    plt.title(titles[i])
-    plt.xticks([]), plt.yticks([])
+visualize_results(images, titles, cols=4)
 
-plt.show()
 
 
 # Continue with segmentation (uncomment when ready)
