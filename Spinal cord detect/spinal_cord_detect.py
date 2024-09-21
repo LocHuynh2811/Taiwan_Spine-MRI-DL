@@ -2,71 +2,86 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from functions import visualize_results, RoundHPF
+import os
 
-# Load the grayscale MRI image
-# Dataset\Original\Healthy\Healthy (1).jpg
-# Dataset\Original\Patient\Patient (16).jpg
-image_path = r"Dataset\Original\Patient\Patient (16).jpg"
-img = cv2.imread(image_path, 0) # load an image
+# DFT and High-Pass Filter function
+def apply_dft_filter(image):
+    dft = cv2.dft(np.float32(image), flags=cv2.DFT_COMPLEX_OUTPUT)
+    dft_shift = np.fft.fftshift(dft)
 
-# ---------------------------------------
-# Fourier Transform
+    # Create a High-Pass Filter Mask
+    mask = RoundHPF(image, r_out=20)
 
-# Output is a 2D complex array. 1st channel real and 2nd imaginary
-dft = cv2.dft(np.float32(img), flags=cv2.DFT_COMPLEX_OUTPUT)
+    # Soften the mask using Gaussian smoothing
+    mask_smoothed = cv2.GaussianBlur(mask, (61, 61), sigmaX=10)
+    mask_smoothed = np.repeat(mask_smoothed[:, :, np.newaxis], 2, axis=2)
 
-# Shift zero-frequency to the center
-dft_shift = np.fft.fftshift(dft)
+    # Apply mask to the frequency domain
+    fshift = dft_shift * mask_smoothed
 
-# Magnitude spectrum before applying the high-pass filter (for visualization)
-magnitude_spectrum_before = 20 * np.log(cv2.magnitude(dft_shift[:, :, 0], dft_shift[:, :, 1]) + 1)
+    # Inverse DFT
+    f_ishift = np.fft.ifftshift(fshift)
+    img_back = cv2.idft(f_ishift)
+    img_back = cv2.magnitude(img_back[:, :, 0], img_back[:, :, 1])
 
-# ---------------------------------------
-# Create a High-Pass Filter Mask
-mask = RoundHPF(img, r_out=20)
+    # Normalize the result for visualization
+    img_back = cv2.normalize(img_back, None, 0, 255, cv2.NORM_MINMAX)
+    img_back = np.uint8(img_back)
+    
+    return img_back
 
-# ---------------------------------------
-# Convert the mask to a 3-channel for convolution (if needed for complex DFT)
-mask_smoothed = cv2.GaussianBlur(mask, (61,61), sigmaX=10)
+# Function to create the DFT folder structure and save processed images
+def process_images_in_folders(input_folder, output_folder):
+    for root, dirs, files in os.walk(input_folder):
+        for file in files:
+            if file.endswith(('.jpg', '.png', '.jpeg', '.bmp', '.tiff')):  # Add more formats if needed
+                file_path = os.path.join(root, file)
+                
+                # Load the image
+                img = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
+                if img is None:
+                    print(f"Failed to load image {file_path}")
+                    continue
+                
+                # Apply the DFT filter
+                processed_img = apply_dft_filter(img)
+                
+                # Create corresponding output path
+                relative_path = os.path.relpath(root, input_folder)
+                output_dir = os.path.join(output_folder, relative_path)
+                os.makedirs(output_dir, exist_ok=True)
 
-# Expand the smoothed mask to apply it to both real and imaginary parts of the DFT
-mask_smoothed = np.repeat(mask_smoothed[:, :, np.newaxis], 2, axis=2)
+                # Save the processed image
+                output_file_path = os.path.join(output_dir, file)
+                cv2.imwrite(output_file_path, processed_img)
+                print(f"Processed and saved: {output_file_path}")
 
-# Apply the softened mask to the frequency domain
-fshift = dft_shift * mask_smoothed
+input_folder = r'Dataset\Original'  # Replace with the path to your main folder
+output_folder = r'Dataset\DFT'  # Replace with the path where you want to save the DFT images
 
-# Magnitude spectrum after applying the high-pass filter
-magnitude_spectrum_after = 2000 * np.log(cv2.magnitude(fshift[:, :, 0], fshift[:, :, 1]) + 1)
+# Process the images
+process_images_in_folders(input_folder, output_folder)
 
-# ---------------------------------------
-# Inverse DFT to get the filtered image
-f_ishift = np.fft.ifftshift(fshift)
-img_back = cv2.idft(f_ishift)
-img_back = cv2.magnitude(img_back[:, :, 0], img_back[:, :, 1])
+# # Apply Thresholding
+# img_back = cv2.convertScaleAbs(img_back)
+# _, binary_image = cv2.threshold(img_back, 100, 200, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-# Normalize the result for better visualization
-img_back = cv2.normalize(img_back, None, 0, 255, cv2.NORM_MINMAX)
+# # Canny Edge Detection
+# edges_1 = cv2.Canny(np.uint8(img_back), 100, 200)
 
-# Apply Thresholding
-img_back = cv2.convertScaleAbs(img_back)
-_, binary_image = cv2.threshold(img_back, 100, 200, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+# # Morphological operation for cleaning up the edges
+# kernel = np.ones((5, 5), np.uint8)
+# edges_2 = cv2.morphologyEx(binary_image, cv2.MORPH_CLOSE, kernel)
 
-# Canny Edge Detection
-edges_1 = cv2.Canny(np.uint8(img_back), 100, 200)
+# # ---------------------------------------
+# # Visualization
 
-# Morphological operation for cleaning up the edges
-kernel = np.ones((5, 5), np.uint8)
-edges_2 = cv2.morphologyEx(binary_image, cv2.MORPH_CLOSE, kernel)
+# titles = ['Original Image', 'Magnitude Spectrum Before', 'High-Pass Mask', 'Smoothed Mask',
+#           'Magnitude Spectrum After', 'Image Back', 'Threshold Image', 'Edge Image (Canny)']
+# images = [img, magnitude_spectrum_before, mask, mask_smoothed[:, :, 0],
+#           magnitude_spectrum_after, img_back, binary_image, edges_2]
 
-# ---------------------------------------
-# Visualization
-
-titles = ['Original Image', 'Magnitude Spectrum Before', 'High-Pass Mask', 'Smoothed Mask',
-          'Magnitude Spectrum After', 'Image Back', 'Threshold Image', 'Edge Image (Canny)']
-images = [img, magnitude_spectrum_before, mask, mask_smoothed[:, :, 0],
-          magnitude_spectrum_after, img_back, binary_image, edges_2]
-
-visualize_results(images, titles, cols=4)
+# visualize_results(images, titles, cols=4)
 
 
 
